@@ -1,0 +1,25 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.aws/
+
+# Agent instructions, settings, and work records
+AGENTS*.md
+record.md
+.agents/
+.codex/
+.claude/
+CLAUDE.md
+.cursor/
+.cursorrules
+.github/copilot-instructions.md
+.github/agents/
+.github/prompts/
+
+# Generated files, dependencies, and logs
+dist/
+node_modules/
+*.log
+*.previous
+*.autopush-backup

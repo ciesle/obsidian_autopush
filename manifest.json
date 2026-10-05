@@ -1,0 +1,9 @@
+{
+  "id": "autopush-on-close",
+  "name": "Auto Push on Close",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Commit and push your Git vault in the background when the main window closes.",
+  "author": "Auto Push on Close contributors",
+  "isDesktopOnly": true
+}
