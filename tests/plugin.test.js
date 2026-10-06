@@ -14,7 +14,7 @@ function fixture() {
       this.commands = [];
       this.manifest = { id: 'autopush-on-close' };
       this.app = { vault: { adapter: new FileSystemAdapter(), configDir: '.obsidian' },
-        workspace: { onLayoutReady() {} } };
+        workspace: { onLayoutReady(callback) { this.ready = callback; } } };
     }
     async loadData() { return null; }
     registerDomEvent(target, type, handler) {
@@ -67,4 +67,21 @@ test('plugin cleanup removes the close listener', async () => {
   for (const cleanup of plugin.cleanups) cleanup();
   mainWindow.dispatchEvent(new Event('beforeunload'));
   assert.equal(launches.length, 0);
+});
+
+
+test('layout ready pulls once and startup toggle disables it', async () => {
+  const { plugin, launches } = fixture();
+  plugin.showLastResult = () => {};
+  await plugin.onload();
+  assert.equal(launches.length, 0);
+  plugin.app.workspace.ready();
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].options.operation, 'pull');
+  assert.equal(launches[0].options.delayMs, 0);
+  plugin.settings.pullOnStartup = false;
+  plugin.app.workspace.ready();
+  assert.equal(launches.length, 1);
+  plugin.commands.find(command => command.id === 'pull-now').callback();
+  assert.equal(launches.length, 2);
 });

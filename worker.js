@@ -5,7 +5,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
-async function run({ vaultPath, gitPath = 'git', commitMessage = 'vault: auto backup {date}', delayMs = 2000, timeoutMs = 120000 }) {
+async function run({ vaultPath, gitPath = 'git', commitMessage = 'vault: auto backup {date}', delayMs = 2000, timeoutMs = 120000, operation = 'push' }) {
   const vault = fs.realpathSync(vaultPath);
   const git = (args) => execFileSync(gitPath, args, {
     cwd: vault, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024,
@@ -36,7 +36,8 @@ async function run({ vaultPath, gitPath = 'git', commitMessage = 'vault: auto ba
   };
   let result;
   try {
-    log('開始');
+    if (!['push', 'pull'].includes(operation)) throw new Error('不明な操作です。');
+    log(`${operation} 開始`);
     // Give Obsidian's final disk writes time to finish. This is best effort.
     await delay(Math.max(0, Math.min(10000, Number(delayMs) || 0)));
     const branch = git(['symbolic-ref', '--quiet', 'HEAD']).trim();
@@ -47,30 +48,40 @@ async function run({ vaultPath, gitPath = 'git', commitMessage = 'vault: auto ba
     }
     if (git(['diff', '--name-only', '--diff-filter=U']).trim()) throw new Error('未解決の競合があります。');
     if (git(['symbolic-ref', '--quiet', 'HEAD']).trim() !== branch) throw new Error('処理中にブランチが変更されました。');
-    git(['add', '--all', '--', '.']);
-    let changed = false;
-    try {
-      git(['diff', '--cached', '--quiet', '--exit-code']);
-    } catch (error) {
-      if (error.status !== 1) throw error;
-      changed = true;
+    if (operation === 'pull') {
+      if (git(['status', '--porcelain', '--untracked-files=all']).trim()) {
+        throw new Error('未コミットの変更があるため起動時のpullを中止しました。変更を保存・コミットしてから再実行してください。');
+      }
+      const output = git(['-c', 'pull.rebase=false', '-c', 'pull.autostash=false', '-c', 'merge.autostash=false',
+        'pull', '--ff-only', '--no-rebase', '--no-autostash', '--', tracking[0], tracking[1]]);
+      log(output.trim());
+      result = { status: 'success', operation, message: 'pull 完了', finishedAt: new Date().toISOString() };
+    } else {
+      git(['add', '--all', '--', '.']);
+      let changed = false;
+      try {
+        git(['diff', '--cached', '--quiet', '--exit-code']);
+      } catch (error) {
+        if (error.status !== 1) throw error;
+        changed = true;
+      }
+      let committed = false;
+      if (changed) {
+        const message = String(commitMessage).replaceAll('{date}', new Date().toISOString()).trim();
+        if (!message) throw new Error('コミットメッセージが空です。');
+        git(['commit', '-m', message]);
+        committed = true;
+        log('コミット完了');
+      }
+      if (git(['symbolic-ref', '--quiet', 'HEAD']).trim() !== branch) throw new Error('処理中にブランチが変更されました。');
+      // Explicit destination follows upstream even when push.default/pushRemote differ.
+      const output = git(['push', '--porcelain', '--', tracking[0], `${branch}:${tracking[1]}`]);
+      log(output.trim());
+      result = { status: 'success', operation, committed, message: 'push 完了', finishedAt: new Date().toISOString() };
     }
-    let committed = false;
-    if (changed) {
-      const message = String(commitMessage).replaceAll('{date}', new Date().toISOString()).trim();
-      if (!message) throw new Error('コミットメッセージが空です。');
-      git(['commit', '-m', message]);
-      committed = true;
-      log('コミット完了');
-    }
-    if (git(['symbolic-ref', '--quiet', 'HEAD']).trim() !== branch) throw new Error('処理中にブランチが変更されました。');
-    // Explicit destination follows upstream even when push.default/pushRemote differ.
-    const output = git(['push', '--porcelain', '--', tracking[0], `${branch}:${tracking[1]}`]);
-    log(output.trim());
-    result = { status: 'success', committed, message: 'push 完了', finishedAt: new Date().toISOString() };
   } catch (error) {
     const detail = String(error.stderr || error.message).trim();
-    result = { status: 'error', message: detail, finishedAt: new Date().toISOString() };
+    result = { status: 'error', operation, message: detail, finishedAt: new Date().toISOString() };
     log(`失敗: ${detail}`);
   } finally {
     try {
@@ -95,6 +106,6 @@ if (require.main === module) {
     process.exitCode = 1;
   }
   if (options) run(options).then((result) => {
-    process.exitCode = result.status === 'error' ? 1 : 0;
+    process.exitCode = result.status === 'error' ? 1 : result.status === 'busy' ? 2 : 0;
   }).catch((error) => { console.error(error.message); process.exitCode = 1; });
 }

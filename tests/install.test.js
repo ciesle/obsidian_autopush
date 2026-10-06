@@ -8,7 +8,7 @@ const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const execute = (program, args, cwd, extraEnv = {}) => execFileSync(program, args, {
-  env: { ...process.env, ...extraEnv }, cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, AUTOPUSH_ENV_FILE: path.join(cwd, 'missing-test.env'), ...extraEnv }, cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
 });
 
 test('installer preserves other plugins and user settings, and can be rerun', (t) => {

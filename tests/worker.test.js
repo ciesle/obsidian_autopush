@@ -149,3 +149,62 @@ test('refuses to stage or commit while merge or rebase markers exist', async (t)
     });
   }
 });
+
+
+function advanceRemote(base, remote) {
+  const other = path.join(base, 'other');
+  git(base, 'clone', remote, other);
+  git(other, 'config', 'user.name', 'Pull Test');
+  git(other, 'config', 'user.email', 'pull@example.invalid');
+  fs.writeFileSync(path.join(other, 'remote-note.txt'), 'remote note\n');
+  git(other, 'add', '.');
+  git(other, 'commit', '-m', 'remote update');
+  git(other, 'push');
+}
+
+test('startup pull fast forwards and never pushes local commits', async t => {
+  const { base, vault, remote, options } = fixture(t);
+  advanceRemote(base, remote);
+  const result = await worker({ ...options, operation: 'pull' });
+  assert.equal(result.status, 'success');
+  assert.equal(fs.readFileSync(path.join(vault, 'remote-note.txt'), 'utf8'), 'remote note\n');
+  const remoteHead = git(remote, 'rev-parse', 'main');
+  git(vault, 'commit', '--allow-empty', '-m', 'local only');
+  const head = git(vault, 'rev-parse', 'HEAD');
+  assert.equal((await worker({ ...options, operation: 'pull' })).status, 'success');
+  assert.equal(git(vault, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(remote, 'rev-parse', 'main'), remoteHead);
+});
+
+test('startup pull preserves uncommitted edits, staged files and untracked files', async t => {
+  for (const kind of ['unstaged', 'staged', 'untracked']) {
+    await t.test(kind, async t => {
+      const { base, vault, remote, options } = fixture(t);
+      advanceRemote(base, remote);
+      const file = kind === 'untracked' ? 'new.txt' : 'tracked.txt';
+      fs.writeFileSync(path.join(vault, file), 'local edit\n');
+      if (kind === 'staged') git(vault, 'add', file);
+      const head = git(vault, 'rev-parse', 'HEAD');
+      const status = git(vault, 'status', '--porcelain');
+      const result = await worker({ ...options, operation: 'pull' });
+      assert.equal(result.status, 'error');
+      assert.match(result.message, /未コミット/);
+      assert.equal(git(vault, 'rev-parse', 'HEAD'), head);
+      assert.equal(git(vault, 'status', '--porcelain'), status);
+      assert.equal(fs.readFileSync(path.join(vault, file), 'utf8'), 'local edit\n');
+    });
+  }
+});
+
+test('startup pull refuses divergence without merge, rebase or stash', async t => {
+  const { base, vault, remote, options, stateDir } = fixture(t);
+  advanceRemote(base, remote);
+  git(vault, 'commit', '--allow-empty', '-m', 'local divergence');
+  const head = git(vault, 'rev-parse', 'HEAD');
+  const result = await worker({ ...options, operation: 'pull' });
+  assert.equal(result.status, 'error');
+  assert.equal(git(vault, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(vault, 'stash', 'list'), '');
+  assert.equal(fs.existsSync(path.join(vault, '.git', 'MERGE_HEAD')), false);
+  assert.equal(fs.existsSync(path.join(stateDir, 'worker.lock')), false);
+});

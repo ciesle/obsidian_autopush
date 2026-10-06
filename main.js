@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const DEFAULTS = { enabled: true, nodePath: 'node', gitPath: 'git', commitMessage: 'vault: auto backup {date}' };
+const DEFAULTS = { enabled: true, pullOnStartup: true, nodePath: 'node', gitPath: 'git', commitMessage: 'vault: auto backup {date}' };
 
 module.exports = class AutoPushOnClose extends Plugin {
   async onload() {
@@ -25,20 +25,30 @@ module.exports = class AutoPushOnClose extends Plugin {
     this.addCommand({ id: 'push-now', name: '今すぐコミットしてpush', callback: () => this.startWorker() });
     this.addCommand({ id: 'show-last-result', name: '前回の結果を表示', callback: () => this.showLastResult() });
     this.addSettingTab(new AutoPushSettings(this.app, this));
-    this.app.workspace.onLayoutReady(() => this.showLastResult(true));
+    this.addCommand({ id: 'pull-now', name: '今すぐpull', callback: () => this.startWorker('pull') });
+    this.app.workspace.onLayoutReady(() => {
+      this.showLastResult(true);
+      if (this.settings.pullOnStartup) this.startWorker('pull');
+    });
   }
 
-  startWorker() {
+  startWorker(operation = 'push') {
     try {
-      this.launch({ nodePath: this.settings.nodePath, workerPath: path.join(this.pluginPath, 'worker.js'),
+      const child = this.launch({ nodePath: this.settings.nodePath, workerPath: path.join(this.pluginPath, 'worker.js'),
         logDirectory: this.logDirectory, options: {
           vaultPath: this.vaultPath, gitPath: this.settings.gitPath,
-          commitMessage: this.settings.commitMessage, delayMs: 2000,
-        }, onError: (error) => new Notice(`Auto Push: 起動失敗 (${error.message})。設定と launcher.log を確認してください。`, 10000),
+          commitMessage: this.settings.commitMessage, operation, delayMs: operation === 'pull' ? 0 : 2000,
+        }, onError: (error) => new Notice(`Auto Pull & Push: 起動失敗 (${error.message})。設定と launcher.log を確認してください。`, 10000),
       });
+      if (operation === 'pull' && child && typeof child.once === 'function') {
+        child.once('exit', (code) => {
+          if (code === 2) new Notice('Auto Pull & Push: 別の処理が実行中のためpullをスキップしました。');
+          else this.showLastResult();
+        });
+      }
     } catch (error) {
-      console.error('Auto Push on Close:', error);
-      new Notice(`Auto Push: ${error.message}`, 10000);
+      console.error('Auto Pull & Push:', error);
+      new Notice(`Auto Pull & Push: ${error.message}`, 10000);
     }
   }
 
@@ -48,7 +58,7 @@ module.exports = class AutoPushOnClose extends Plugin {
         { cwd: this.vaultPath, encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
       const result = JSON.parse(fs.readFileSync(path.resolve(this.vaultPath, relative), 'utf8'));
       if (!onlyError || result.status === 'error') {
-        new Notice(`Auto Push (${result.finishedAt}): ${result.message}`, result.status === 'error' ? 15000 : 5000);
+        new Notice(`Auto Pull & Push (${result.finishedAt}): ${result.message}`, result.status === 'error' ? 15000 : 5000);
       }
     } catch (error) {
       if (!onlyError) new Notice('まだ結果がありません。プラグイン内の logs/launcher.log も確認してください。');
@@ -69,6 +79,12 @@ class AutoPushSettings extends PluginSettingTab {
       toggle.setValue(plugin.settings.enabled).onChange(async (value) => {
         plugin.settings.enabled = value; await plugin.saveSettings();
       }));
+    new Setting(containerEl).setName('起動時の自動pull').setDesc('変更がない保管庫をfast-forwardで更新します。失敗時は通知します。').addToggle((toggle) =>
+      toggle.setValue(plugin.settings.pullOnStartup).onChange(async (value) => {
+        plugin.settings.pullOnStartup = value; await plugin.saveSettings();
+      }));
+    new Setting(containerEl).setName('今すぐpull').addButton((button) =>
+      button.setButtonText('pull').onClick(() => plugin.startWorker('pull')));
     for (const [key, name, description] of [
       ['nodePath', 'Node.js の実行ファイル', 'Node.js 18以上。見つからない場合は絶対パスを指定してください。'],
       ['gitPath', 'Git の実行ファイル', '見つからない場合は絶対パスを指定してください。'],

@@ -1,9 +1,9 @@
 {
   "id": "autopush-on-close",
-  "name": "Auto Push on Close",
-  "version": "0.1.0",
+  "name": "Auto Pull & Push",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "Commit and push your Git vault in the background when the main window closes.",
-  "author": "Auto Push on Close contributors",
+  "description": "Pull your Git vault on startup, then commit and push in the background when the main window closes.",
+  "author": "Auto Pull & Push contributors",
   "isDesktopOnly": true
 }
